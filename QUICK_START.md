@@ -53,18 +53,18 @@ brew upgrade node
 
 ### 问题2：Android设备未连接
 ```bash
-# 启动模拟器
-/Users/shengwang/Library/Android/sdk/emulator/emulator -avd Medium_Phone_API_36.0
+# 启动模拟器（按你本地的 AVD 名称替换 YourAVDName）
+"$ANDROID_HOME/emulator/emulator" -avd YourAVDName
 
 # 检查设备
-/Users/shengwang/Library/Android/sdk/platform-tools/adb devices
+adb devices
 ```
 
 ### 问题3：Appium服务器未启动
 ```bash
-# 设置环境变量并启动
-export ANDROID_HOME=/Users/shengwang/Library/Android/sdk
-export ANDROID_SDK_ROOT=/Users/shengwang/Library/Android/sdk
+# 设置环境变量并启动（默认指向 ~/Library/Android/sdk）
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
 appium --port 4723
 ```
 

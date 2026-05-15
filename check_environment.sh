@@ -1,6 +1,15 @@
 #!/bin/bash
 # 大麦抢票 - 环境检查脚本
 # 使用方法: ./check_environment.sh
+#
+# 可通过环境变量自定义：
+#   ANDROID_HOME / ANDROID_SDK_ROOT - Android SDK 根路径，默认 ~/Library/Android/sdk
+#   APPIUM_PORT                     - Appium 监听端口，默认 4723
+
+DEFAULT_SDK="$HOME/Library/Android/sdk"
+export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$DEFAULT_SDK}}"
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+APPIUM_PORT="${APPIUM_PORT:-4723}"
 
 echo "🔍 检查大麦抢票环境..."
 echo "================================"
@@ -21,8 +30,7 @@ echo "📦 检查Node.js环境..."
 if command -v node &> /dev/null; then
     NODE_VERSION=$(node --version)
     echo "✅ Node.js: $NODE_VERSION"
-    
-    # 检查版本是否兼容
+
     NODE_MAJOR=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
     if [ "$NODE_MAJOR" -ge 20 ]; then
         echo "✅ Node.js版本兼容"
@@ -49,44 +57,36 @@ fi
 # 检查Android SDK
 echo ""
 echo "📱 检查Android SDK..."
-if [ -d "/Users/shengwang/Library/Android/sdk" ]; then
-    echo "✅ Android SDK路径存在"
-    export ANDROID_HOME=/Users/shengwang/Library/Android/sdk
-    export ANDROID_SDK_ROOT=/Users/shengwang/Library/Android/sdk
+if [ -d "$ANDROID_HOME" ]; then
+    echo "✅ Android SDK路径存在: $ANDROID_HOME"
 else
-    echo "❌ Android SDK路径不存在"
-    echo "   请安装Android Studio并配置SDK"
+    echo "❌ Android SDK路径不存在: $ANDROID_HOME"
+    echo "   请安装Android Studio并设置 ANDROID_HOME 环境变量"
     exit 1
 fi
 
 # 检查ADB
 echo ""
 echo "🔧 检查ADB..."
-if command -v adb &> /dev/null; then
-    echo "✅ ADB可用"
+ADB="$(command -v adb || echo "$ANDROID_HOME/platform-tools/adb")"
+if [ -x "$ADB" ]; then
+    echo "✅ ADB路径: $ADB"
 else
-    ADB_PATH="/Users/shengwang/Library/Android/sdk/platform-tools/adb"
-    if [ -f "$ADB_PATH" ]; then
-        echo "✅ ADB路径: $ADB_PATH"
-    else
-        echo "❌ ADB未找到"
-        exit 1
-    fi
+    echo "❌ ADB未找到"
+    exit 1
 fi
 
 # 检查Android设备
 echo ""
 echo "📱 检查Android设备..."
-DEVICES=$(/Users/shengwang/Library/Android/sdk/platform-tools/adb devices | grep -c "device$")
-if [ $DEVICES -eq 0 ]; then
+DEVICES=$("$ADB" devices | grep -c "device$" || true)
+if [ "$DEVICES" -eq 0 ]; then
     echo "⚠️  未检测到Android设备"
     echo "   请启动模拟器或连接真机"
-    echo "   启动模拟器: /Users/shengwang/Library/Android/sdk/emulator/emulator -avd Medium_Phone_API_36.0"
 else
     echo "✅ 检测到 $DEVICES 个Android设备"
-    
-    # 检查大麦APP
-    if /Users/shengwang/Library/Android/sdk/platform-tools/adb shell pm list packages | grep -q "cn.damai"; then
+
+    if "$ADB" shell pm list packages | grep -q "cn.damai"; then
         echo "✅ 大麦APP已安装"
     else
         echo "⚠️  大麦APP未安装"
@@ -97,8 +97,8 @@ fi
 # 检查Appium服务器
 echo ""
 echo "🌐 检查Appium服务器..."
-if curl -s http://127.0.0.1:4723/status > /dev/null; then
-    echo "✅ Appium服务器正在运行"
+if curl -s "http://127.0.0.1:$APPIUM_PORT/status" > /dev/null; then
+    echo "✅ Appium服务器正在运行（端口 $APPIUM_PORT）"
 else
     echo "⚠️  Appium服务器未运行"
     echo "   启动命令: ./start_appium.sh"
@@ -110,7 +110,7 @@ echo "📋 检查配置文件..."
 if [ -f "damai_appium/config.jsonc" ]; then
     echo "✅ 配置文件存在"
     echo "   当前配置:"
-    cat damai_appium/config.jsonc | grep -E '"keyword"|"city"|"users"' | head -3 | sed 's/^/   /'
+    grep -E '"keyword"|"city"|"users"' damai_appium/config.jsonc | head -3 | sed 's/^/   /'
 else
     echo "❌ 配置文件不存在"
     echo "   请创建 damai_appium/config.jsonc 文件"
