@@ -199,7 +199,9 @@ class Concert:
         print("***开始轮询检测预订按钮（详情页选择保持开启）***\n")
 
         clicked_booking = False
-        while not self._is_order_confirmation_page():
+        # status>=4 表示订单已处理完毕（自动提交成功或半自动场景下用户已被引导手动提交），
+        # 防止 commit_order 被反复重入触发大麦风控
+        while self.status < 4 and not self._is_order_confirmation_page():
             # 进入正式轮询前先确认详情页选项已就位；
             # 若上一轮触发 refresh/get，此处会重新执行一次选择
             self._ensure_details_selected()
@@ -881,21 +883,25 @@ class Concert:
             return False
 
     def _submit_order(self):
-        """提交订单"""
+        """提交订单。
+
+        返回 True 表示已成功触发点击（不保证服务端真的下单成功），
+        返回 False 表示所有 fallback 都失败，需要用户手动操作。
+        """
         print('***准备提交订单***\n')
 
         self._scan_submit_buttons()
 
         submit_button_texts = ['立即提交', '提交订单', '提交', '确认', '立即支付', '去支付', '支付']
 
-        # 尝试多种方法提交
         if (self._try_submit_by_text(submit_button_texts) or
             self._try_submit_by_view_name() or
             self._try_submit_by_class() or
             self._try_submit_by_original_xpath()):
-            return
+            return True
 
-        print(f"  ⚠ 所有方法都失败，请手动点击提交按钮\n")
+        print("  ⚠ 所有方法都失败，请手动点击提交按钮\n")
+        return False
 
     def commit_order(self):
         """提交订单"""
@@ -966,8 +972,14 @@ class Concert:
         else:
             time.sleep(0.5)  # 正常模式：等待0.5秒
 
+        # 不论自动还是半自动，commit_order 跑到这里都意味着已经走完用户选择，
+        # 标记为 4（已交付订单页），主循环根据此状态退出，避免反复重入 commit_order 触发风控
         if self.config.if_commit_order:
-            self._submit_order()
+            if self._submit_order():
+                self.status = 4
+        else:
+            print('⚠ if_commit_order=false，请在浏览器内手动点击"立即提交"按钮')
+            self.status = 4
 
     def select_details_page_mobile(self):
         """在移动端详情页完成所有选择：城市、场次、票价、数量（优化版：快速连续执行）"""
