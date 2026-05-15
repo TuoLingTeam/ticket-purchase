@@ -109,20 +109,28 @@ adb devices
 | `price_index` | number | 票价索引（从0开始） | `1` |
 | `if_commit_order` | boolean | 是否自动提交订单 | `true` |
 
-### Web端配置 (config.json)
+### Web端配置 (damai/config.json)
 
 ```json
 {
   "index_url": "https://www.damai.cn/",
   "login_url": "https://passport.damai.cn/login",
-  "target_url": "https://detail.damai.cn/item.htm?id=xxx",
+  "target_url": "https://detail.damai.cn/item.htm?id=123456",
   "users": ["张三", "李四"],
-  "city": "广州",
-  "date": "2023-10-28",
-  "price": "1039",
-  "if_commit_order": true
+  "city": "杭州",
+  "dates": ["2026-04-11", "4月11日", "2026.04.11"],
+  "prices": ["680", "¥680", "680元"],
+  "fast_mode": true,
+  "if_listen": false,
+  "if_commit_order": true,
+  "max_retries": 5000,
+  "page_load_delay": 2
 }
 ```
+
+`dates`、`prices` 为数组，脚本会按顺序逐个尝试匹配，第一个命中且不含
+"无票/缺货/售罄"的选项被选中。`if_listen` 默认 `false`，开启后命中
+"缺货登记"按钮会交互式二次确认（避免在大麦后台产生不需要的预订单）。
 
 ## 🚀 使用方法
 
@@ -131,7 +139,7 @@ adb devices
 #### 1. 启动Android设备
 ```bash
 # 启动模拟器
-/Users/shengwang/Library/Android/sdk/emulator/emulator -avd YourAVDName
+"$ANDROID_HOME/emulator/emulator" -avd YourAVDName
 
 # 或连接真机（需开启USB调试）
 adb devices
@@ -142,9 +150,9 @@ adb devices
 
 #### 3. 启动Appium服务器
 ```bash
-# 设置环境变量
-export ANDROID_HOME=/Users/shengwang/Library/Android/sdk
-export ANDROID_SDK_ROOT=/Users/shengwang/Library/Android/sdk
+# 设置环境变量（默认指向 ~/Library/Android/sdk）
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
 # 启动Appium服务器
 appium --port 4723
@@ -160,7 +168,7 @@ appium --port 4723
 #### 5. 运行抢票脚本
 ```bash
 cd damai_appium
-ANDROID_HOME=/Users/shengwang/Library/Android/sdk ANDROID_SDK_ROOT=/Users/shengwang/Library/Android/sdk python damai_app_v2.py
+python damai_app_v2.py
 ```
 
 ### Web端抢票
@@ -311,5 +319,5 @@ ticket-purchase/
 
 ---
 
-**最后更新**: 2024年10月
-**版本**: 2.0.0
+**最后更新**: 2026年5月
+**版本**: 2.1.0
