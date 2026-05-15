@@ -149,7 +149,7 @@ class Concert:
 
     def _is_order_confirmation_page(self):
         """检查是否为订单确认页"""
-        title = self.driver.title
+        title = self.driver.title or ''
         if '订单确认页' in title or '确认购买' in title:
             return True
         try:
@@ -268,15 +268,49 @@ class Concert:
                 self.driver.refresh()
                 self._reset_details_selection()
 
-    def choice_seat(self):
-        while self.driver.title == '选座购买':
-            while self.is_element_exist('//*[@id="app"]/div[2]/div[2]/div[1]/div[2]/img'):
-                # 座位手动选择 选中座位之后//*[@id="app"]/div[2]/div[2]/div[1]/div[2]/img 就会消失
-                print('请快速选择您的座位！！！')
-            # 消失之后就会出现 //*[@id="app"]/div[2]/div[2]/div[2]/div
-            while self.is_element_exist('//*[@id="app"]/div[2]/div[2]/div[2]/div'):
-                # 找到之后进行点击确认选座
-                self.driver.find_element(value='//*[@id="app"]/div[2]/div[2]/div[2]/button', by=By.XPATH).click()
+    def choice_seat(self, max_wait_seconds=180):
+        """等待用户在选座购买页手动选座，然后自动点确认。
+
+        旧实现 title 用精确等于 '选座购买'，但大麦实际 title 经常是
+        '大麦网-选座购买-XXX 演唱会' 之类的形式，精确匹配会立刻退出。
+        内层 while 没有 sleep，等待选座时会以接近 CPU 满载的速度刷屏。
+
+        max_wait_seconds: 用户最长选座等待时间，超时返回让主循环重新决策。
+        """
+        SEAT_PROMPT_XPATH = '//*[@id="app"]/div[2]/div[2]/div[1]/div[2]/img'
+        SEAT_CONFIRM_PANEL_XPATH = '//*[@id="app"]/div[2]/div[2]/div[2]/div'
+        SEAT_CONFIRM_BUTTON_XPATH = '//*[@id="app"]/div[2]/div[2]/div[2]/button'
+
+        deadline = time.time() + max_wait_seconds
+        prompted = False
+
+        while '选座购买' in (self.driver.title or ''):
+            if time.time() > deadline:
+                print('⚠ 选座等待超时，回到主循环重新决策')
+                return
+
+            # 等待用户拖动选座，期间页面上仍显示选座提示图
+            if self.is_element_exist(SEAT_PROMPT_XPATH):
+                if not prompted:
+                    print('请快速选择您的座位！！！')
+                    prompted = True
+                time.sleep(0.5)
+                continue
+
+            # 选座提示图消失 → 用户已选；尝试点确认面板内的按钮
+            if self.is_element_exist(SEAT_CONFIRM_PANEL_XPATH):
+                try:
+                    self.driver.find_element(value=SEAT_CONFIRM_BUTTON_XPATH, by=By.XPATH).click()
+                    print('✓ 已点击确认选座按钮')
+                    time.sleep(0.5)
+                    return
+                except Exception as e:
+                    print(f'⚠ 点击确认选座失败: {e}')
+                    time.sleep(0.3)
+                    continue
+
+            # title 还停留在选座页但选座提示和确认面板都没出现，给页面一点时间渲染
+            time.sleep(0.3)
 
     def _select_option_by_config(self, config_list, element_list, skip_keywords=None):
         """根据配置列表选择选项
