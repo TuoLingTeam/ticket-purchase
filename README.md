@@ -252,8 +252,7 @@ ticket-purchase/
 │   ├── config.json          # 配置文件
 │   └── requirements.txt      # 依赖文件
 ├── damai_appium/             # 移动端抢票
-│   ├── damai_app_v2.py      # 优化版主程序
-│   ├── damai_app.py         # 原版主程序
+│   ├── damai_app_v2.py      # 主程序（轮询模式）
 │   ├── config.py            # 配置类
 │   ├── config.jsonc         # 配置文件
 │   └── app.md               # 应用说明

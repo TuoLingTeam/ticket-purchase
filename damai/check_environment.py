@@ -288,7 +288,38 @@ def check_config_file():
         return False
 
 
+def _run_quick():
+    """快速诊断：仅检查 Chrome / ChromeDriver / autoinstaller，省略其它项。"""
+    print("=" * 50)
+    print("ChromeDriver 快速诊断")
+    print("=" * 50)
+    print()
+
+    chrome_ok = check_chrome()
+    driver_ok = check_chromedriver()
+    match_ok = check_version_match()
+
+    try:
+        import chromedriver_autoinstaller  # noqa: F401
+        autoinstaller_ok = True
+        print("  ✓ chromedriver-autoinstaller 已安装")
+    except ImportError:
+        autoinstaller_ok = False
+        print("  ✗ chromedriver-autoinstaller 未安装")
+        print("    安装命令: pip install chromedriver-autoinstaller")
+
+    print()
+    if chrome_ok and driver_ok and match_ok and autoinstaller_ok:
+        print("✓ 快速诊断通过\n")
+        return 0
+    print("✗ 快速诊断未通过，请按上方提示修复\n")
+    return 1
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ('--quick', '-q'):
+        return _run_quick()
+
     print("\n" + "=" * 60)
     print("大麦抢票脚本 - 环境检查工具")
     print("=" * 60)
