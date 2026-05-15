@@ -219,6 +219,32 @@ class Concert:
         """页面被 refresh / 重载后清掉已选标记，下次循环会自动重新走一遍详情页选择。"""
         self._details_selected = False
 
+    def _confirm_listen_action(self):
+        """缺货登记按钮的二次确认。
+
+        缺货登记会在大麦后台产生用户可能不想要的预订单（推送通知 + 占用名额），
+        即便用户在 config 里开了 if_listen=True，这里仍然只确认一次，避免反复轮询
+        阶段中被反复触发缺货登记。
+        """
+        if not self.config.if_listen:
+            return False
+        if getattr(self, '_listen_confirmed', False):
+            # 同一会话内已经确认过，第二次直接放行
+            return True
+        print('\n⚠ 检测到"缺货登记"按钮且 if_listen=true')
+        print('   缺货登记会在大麦后台产生预订单，是否登记？(y/N)：', end='', flush=True)
+        try:
+            ans = input().strip().lower()
+        except EOFError:
+            ans = ''
+        if ans == 'y':
+            self._listen_confirmed = True
+            return True
+        print('  已跳过缺货登记')
+        # 跳过后把 if_listen 置 false，避免循环里反复弹问
+        self.config.if_listen = False
+        return False
+
     def choose_ticket(self):
         """
         :return: 选票
@@ -263,7 +289,7 @@ class Concert:
                 clickable_actions = [
                     ("立即预订", buy_button, 'buy__button__text'),
                     ("立即购买", buy_button, 'buy__button__text'),
-                    ("缺货登记", buy_button, 'buy__button__text', lambda: self.config.if_listen),
+                    ("缺货登记", buy_button, 'buy__button__text', lambda: self._confirm_listen_action()),
                     ("选座购买", buy_button, 'buy__button__text'),
                 ]
 

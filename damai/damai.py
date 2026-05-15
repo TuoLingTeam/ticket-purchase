@@ -80,11 +80,11 @@ def load_config():
         config.get('city'),
         config.get('dates'),
         config.get('prices'),
-        config['if_listen'],
-        config['if_commit_order'],
+        config.get('if_listen', False),
+        config.get('if_commit_order', True),
         config.get('max_retries', 1000),
-        config.get('fast_mode', True),  # 默认启用快速模式
-        config.get('page_load_delay', 2)  # 默认2秒
+        config.get('fast_mode', True),
+        config.get('page_load_delay', 2),
     )
 
 
