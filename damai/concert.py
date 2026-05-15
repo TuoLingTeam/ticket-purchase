@@ -45,40 +45,71 @@ class Concert:
         self.driver = webdriver.Chrome(service=service, options=chrome_options)  # 默认Chrome浏览器
 
     def set_cookie(self):
-        """
-        :return: 写入cookie
+        """打开大麦首页，等用户扫码登录后把 cookie 持久化。
+
+        旧实现用 `title == '大麦网-全球演出赛事官方购票平台-100%正品、先付先抢、在线选座！'`
+        精确等于来判断登录完成，大麦每次改 SEO 副标题就立刻死循环。
+        现在改为：从未登录态等待 → 检测 title 不再含登录页关键词时认为已登录。
         """
         self.driver.get(self.config.index_url)
         print("***请点击登录***\n")
-        while self.driver.title.find('大麦网-全球演出赛事官方购票平台') != -1:
+        # 等待用户从首页跳转到登录页（标题中通常出现"登录"二字）
+        while '登录' not in (self.driver.title or ''):
+            if '大麦网' not in (self.driver.title or ''):
+                # 已经离开大麦域名，可能用户走错了
+                sleep(1)
+                continue
             sleep(1)
         print("***请扫码登录***\n")
-        while self.driver.title != '大麦网-全球演出赛事官方购票平台-100%正品、先付先抢、在线选座！':
+        # 等待登录完成（title 不再含"登录"二字 且仍在大麦域）
+        while '登录' in (self.driver.title or ''):
             sleep(1)
         print("***扫码成功***\n")
 
-        # 将cookie写入damai_cookies.pkl文件中
-        pickle.dump(self.driver.get_cookies(), open("damai_cookies.pkl", "wb"))
+        with open('damai_cookies.pkl', 'wb') as f:
+            pickle.dump(self.driver.get_cookies(), f)
         print("***Cookie保存成功***")
-        # 读取抢票目标页面
         self.driver.get(self.config.target_url)
 
     def get_cookie(self):
-        """
-        :return: 读取cookie
+        """加载持久化的 cookie 注入到当前 driver。
+
+        旧实现把所有 cookie 的 domain 强改为 '.damai.cn'，并且丢弃了 path / expiry /
+        secure / sameSite 等属性。大麦实际 cookie 跨 passport.damai.cn /
+        detail.damai.cn / .damai.cn 三个域，强改 domain 会让鉴权 token
+        被服务端判定无效，重新弹登录页。
+
+        修复：保留原 cookie 字段，仅做必要的兼容处理（删除 selenium 不接受的字段）。
         """
         try:
-            cookies = pickle.load(open("damai_cookies.pkl", "rb"))
+            with open('damai_cookies.pkl', 'rb') as f:
+                cookies = pickle.load(f)
             for cookie in cookies:
-                cookie_dict = {
-                    'domain': '.damai.cn',  # 域为大麦网的才为有效cookie
-                    'name': cookie.get('name'),
-                    'value': cookie.get('value'),
-                }
-                self.driver.add_cookie(cookie_dict)
+                cookie_dict = dict(cookie)
+                # selenium add_cookie 不接受 sameSite='None' 的写法（旧版 chromedriver bug）
+                if cookie_dict.get('sameSite') not in (None, 'Strict', 'Lax', 'None'):
+                    cookie_dict.pop('sameSite', None)
+                # expiry 必须是 int；浮点会被部分版本 chromedriver 拒绝
+                if isinstance(cookie_dict.get('expiry'), float):
+                    cookie_dict['expiry'] = int(cookie_dict['expiry'])
+                try:
+                    self.driver.add_cookie(cookie_dict)
+                except Exception as cookie_err:
+                    # 单个 cookie 注入失败时回退到最小字段集合，避免一颗坏 cookie 让整批失败
+                    minimal = {
+                        'name': cookie_dict.get('name'),
+                        'value': cookie_dict.get('value'),
+                        'domain': cookie_dict.get('domain') or '.damai.cn',
+                    }
+                    try:
+                        self.driver.add_cookie(minimal)
+                    except Exception:
+                        print(f'  ⚠ cookie 注入失败 {minimal.get("name")}: {cookie_err}')
             print('***完成cookie加载***\n')
+        except FileNotFoundError:
+            print('damai_cookies.pkl 不存在，需要重新扫码登录')
         except Exception as e:
-            print(e)
+            print(f'读取 cookie 失败: {e}')
 
     def login(self):
         """
