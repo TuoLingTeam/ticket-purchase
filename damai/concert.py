@@ -21,6 +21,10 @@ class Concert:
         self.config = config
         self.status = 0  # 状态,表示如今进行到何种程度
         self.login_method = 1  # {0:模拟登录,1:Cookie登录}自行选择登录方式
+        # 标记详情页四要素（城市/场次/票价/数量）是否已选完成，
+        # 用于在页面 refresh/get 后通过 _reset_details_selection 清零，
+        # 触发下一次循环自动重新选择，避免选择状态随页面重载丢失
+        self._details_selected = False
 
         # 环境检查：自动安装/验证 ChromeDriver
         print("⏳ 正在检查 Chrome 环境...")
@@ -154,6 +158,36 @@ class Concert:
         except Exception:
             return False
 
+    def _ensure_details_selected(self):
+        """幂等保证详情页四要素已选好。仅在详情页 URL 且未选过时执行。
+
+        关键设计：把"选城市/场次/票价/数量"从一次性副作用改成可重入的保护性调用，
+        因为大麦详情页每次 refresh/get 后所有选择都会被重置回默认值。
+        """
+        if self._details_selected:
+            return
+
+        cur_url = self.driver.current_url or ''
+        # 已离开详情页（如跳到订单页/选座页）就不再补选，避免误点
+        if 'detail.damai.cn' not in cur_url and 'm.damai.cn' not in cur_url:
+            return
+
+        is_mobile = 'm.damai.cn' in cur_url
+        if is_mobile:
+            if not self.config.fast_mode:
+                print('检测到移动端页面\n')
+            self.select_details_page_mobile()
+        else:
+            if not self.config.fast_mode:
+                print('检测到PC端页面\n')
+            self.select_details_page_pc()
+
+        self._details_selected = True
+
+    def _reset_details_selection(self):
+        """页面被 refresh / 重载后清掉已选标记，下次循环会自动重新走一遍详情页选择。"""
+        self._details_selected = False
+
     def choose_ticket(self):
         """
         :return: 选票
@@ -162,24 +196,14 @@ class Concert:
             return
 
         print("*******************************\n")
-        print("***开始在详情页选择***\n")
-
-        # 判断是否为移动端
-        is_mobile = 'm.damai.cn' in self.driver.current_url
-
-        # 在详情页完成所有选择：城市、场次、票价、数量
-        if is_mobile:
-            print("检测到移动端页面\n")
-            self.select_details_page_mobile()
-        else:
-            print("检测到PC端页面\n")
-            self.select_details_page_pc()
-
-        print("*******************************\n")
-        print("***开始轮询检测预订按钮***\n")
+        print("***开始轮询检测预订按钮（详情页选择保持开启）***\n")
 
         clicked_booking = False
         while not self._is_order_confirmation_page():
+            # 进入正式轮询前先确认详情页选项已就位；
+            # 若上一轮触发 refresh/get，此处会重新执行一次选择
+            self._ensure_details_selected()
+
             if clicked_booking:
                 if self._is_order_confirmation_page():
                     print('  ✓ 页面已跳转到订单确认页\n')
@@ -188,7 +212,6 @@ class Concert:
                     print('  ✓ 页面已跳转到选座购买页\n')
                     break
                 else:
-                    # 根据快速模式调整等待时间
                     wait_time = 0.2 if self.config.fast_mode else 0.5
                     time.sleep(wait_time)
                     continue
@@ -200,10 +223,10 @@ class Concert:
                 if buy_button == "提交缺货登记":
                     self.status = 2
                     self.driver.get(self.config.target_url)
+                    self._reset_details_selection()
                     print('***抢票未开始，刷新等待开始***\n')
                     continue
 
-                # 处理各种可点击的按钮/链接
                 clickable_actions = [
                     ("立即预订", buy_button, 'buy__button__text'),
                     ("立即购买", buy_button, 'buy__button__text'),
@@ -233,7 +256,6 @@ class Concert:
             except Exception as e:
                 print(e)
 
-            # 检查页面类型
             if '选座购买' in self.driver.title:
                 self.choice_seat()
             elif self._is_order_confirmation_page():
@@ -241,10 +263,10 @@ class Concert:
                 self.commit_order()
             else:
                 print('***抢票未开始，刷新等待开始***\n')
-                # 根据快速模式调整刷新等待时间
                 refresh_wait = 0.3 if self.config.fast_mode else 1
                 time.sleep(refresh_wait)
                 self.driver.refresh()
+                self._reset_details_selection()
 
     def choice_seat(self):
         while self.driver.title == '选座购买':
