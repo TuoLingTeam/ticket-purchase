@@ -19,51 +19,70 @@ from config import Config
 
 
 class DamaiBot:
-    def __init__(self):
-        self.config = Config.load_config()
-        self.driver = None
-        self.wait = None
-        self._setup_driver()
+    """大麦 APP 抢票主流程。
 
-    def _setup_driver(self):
-        """初始化驱动配置"""
+    重构要点：
+    - driver 不再在 __init__ 里直接连接，由调用方通过 attach() 注入或
+      显式 setup()，便于复用 driver 跨多次抢票轮询，避免 UiAutomator2
+      起新 session 的 5-10 秒固定开销
+    - run_ticket_grabbing 的 finally 不再无脑 driver.quit()，
+      抢到票后用户需要在 APP 内手动确认订单状态
+    """
+
+    def __init__(self, driver=None):
+        self.config = Config.load_config()
+        self.driver = driver
+        self.wait = None
+        if driver is not None:
+            self._apply_perf_settings()
+
+    def setup(self):
+        """显式建立 Appium 连接。仅在调用方未通过 attach 注入 driver 时使用。"""
+        if self.driver is not None:
+            return
         capabilities = {
-            "platformName": "Android",  # 操作系统
-            "platformVersion": "16",  # 系统版本
-            "deviceName": "emulator-5554",  # 设备名称
-            "appPackage": "cn.damai",  # app 包名
-            "appActivity": ".launcher.splash.SplashMainActivity",  # app 启动 Activity
-            "unicodeKeyboard": True,  # 支持 Unicode 输入
-            "resetKeyboard": True,  # 隐藏键盘
-            "noReset": True,  # 不重置 app
-            "newCommandTimeout": 6000,  # 超时时间
-            "automationName": "UiAutomator2",  # 使用 uiautomator2
-            "skipServerInstallation": False,  # 跳过服务器安装
-            "ignoreHiddenApiPolicyError": True,  # 忽略隐藏 API 策略错误
-            "disableWindowAnimation": True,  # 禁用窗口动画
-            # 优化性能配置
-            "mjpegServerFramerate": 1,  # 降低截图帧率
-            "shouldTerminateApp": False,
+            "platformName": "Android",
+            "platformVersion": "16",
+            "deviceName": "emulator-5554",
+            "appPackage": "cn.damai",
+            "appActivity": ".launcher.splash.SplashMainActivity",
+            "unicodeKeyboard": True,
+            "resetKeyboard": True,
+            "noReset": True,
+            "newCommandTimeout": 6000,
+            "automationName": "UiAutomator2",
+            "skipServerInstallation": False,
+            "ignoreHiddenApiPolicyError": True,
+            "disableWindowAnimation": True,
+            "mjpegServerFramerate": 1,
             "adbExecTimeout": 20000,
         }
-
         device_app_info = AppiumOptions()
         device_app_info.load_capabilities(capabilities)
         self.driver = webdriver.Remote(self.config.server_url, options=device_app_info)
+        self._apply_perf_settings()
 
-        # 更激进的性能优化设置
+    def _apply_perf_settings(self):
+        """对 driver 套用抢票场景的性能调优。driver 已就绪时由 setup 或 attach 调用。"""
         self.driver.update_settings({
-            "waitForIdleTimeout": 0,  # 空闲时间，0 表示不等待，让 UIAutomator2 不等页面“空闲”再返回
-            "actionAcknowledgmentTimeout": 0,  # 禁止等待动作确认
-            "keyInjectionDelay": 0,  # 禁止输入延迟
-            "waitForSelectorTimeout": 300,  # 从500减少到300ms
-            "ignoreUnimportantViews": False,  # 保持false避免元素丢失
+            "waitForIdleTimeout": 0,
+            "actionAcknowledgmentTimeout": 0,
+            "keyInjectionDelay": 0,
+            "waitForSelectorTimeout": 300,
+            "ignoreUnimportantViews": False,
             "allowInvisibleElements": True,
-            "enableNotificationListener": False,  # 禁用通知监听
+            "enableNotificationListener": False,
         })
+        self.wait = WebDriverWait(self.driver, 2)
 
-        # 极短的显式等待，抢票场景下速度优先
-        self.wait = WebDriverWait(self.driver, 2)  # 从5秒减少到2秒
+    def close(self):
+        """显式关闭 driver。由调用方在确认抢票流程整体结束后触发。"""
+        if self.driver is not None:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
 
     def ultra_fast_click(self, by, value, timeout=1.5):
         """超快速点击 - 适合抢票场景"""
@@ -255,34 +274,44 @@ class DamaiBot:
         except Exception as e:
             print(f"抢票过程发生错误: {e}")
             return False
-        finally:
-            time.sleep(1)  # 给最后的操作一点时间
-            self.driver.quit()
+        # 故意不在 finally 里 driver.quit()：
+        # 1. 抢到票后用户需要在 APP 内手动检查/支付订单
+        # 2. driver 生命周期由调用方负责，避免每次重试都重建 session
 
-    def run_with_retry(self, max_retries=3):
-        """带重试机制的抢票"""
-        for attempt in range(max_retries):
-            print(f"第 {attempt + 1} 次尝试...")
+    def run_with_polling(self, max_attempts=20, interval=0.3):
+        """轮询模式的抢票。
+
+        相比旧的 run_with_retry（每次失败都关 session + 重建 session +
+        重走整条 7 步链路，单次重试开销 5-10 秒），轮询模式复用同一 session，
+        在按钮未到位时仅下拉刷新 + 短 sleep，符合大麦开售瞬间的真实节奏。
+
+        max_attempts: 最大轮询次数，默认 20（对应 ~6 秒）
+        interval: 每次轮询间隔（秒），默认 0.3
+        """
+        for attempt in range(1, max_attempts + 1):
+            print(f"\n=== 第 {attempt}/{max_attempts} 次尝试 ===")
             if self.run_ticket_grabbing():
-                print("抢票成功！")
+                print("抢票成功！请在 APP 内确认订单状态")
                 return True
-            else:
-                print(f"第 {attempt + 1} 次尝试失败")
-                if attempt < max_retries - 1:
-                    print("2秒后重试...")
-                    time.sleep(2)
-                    # 重新初始化驱动
-                    try:
-                        self.driver.quit()
-                    except:
-                        pass
-                    self._setup_driver()
+            if attempt >= max_attempts:
+                break
+            # 模拟下拉刷新让按钮状态更新（票未开售时常见做法）
+            try:
+                self.driver.swipe(500, 400, 500, 1600, 200)
+            except Exception as e:
+                print(f"下拉刷新失败: {e}")
+            time.sleep(interval)
 
-        print("所有尝试均失败")
+        print("已达到最大尝试次数，抢票未成功")
         return False
 
 
-# 使用示例
 if __name__ == "__main__":
     bot = DamaiBot()
-    bot.run_with_retry(max_retries=3)
+    try:
+        bot.setup()
+        bot.run_with_polling(max_attempts=20, interval=0.3)
+    finally:
+        # 整体流程结束后给用户 5 秒缓冲，再关闭 driver
+        time.sleep(5)
+        bot.close()
