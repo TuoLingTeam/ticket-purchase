@@ -169,6 +169,33 @@ def check_version_match():
         return False
 
 
+CHROMEDRIVER_CACHE_FILE = os.path.join(
+    os.path.expanduser("~"), ".cache", "damai-ticket-automation", "chromedriver_path"
+)
+
+
+def _read_cached_chromedriver_path():
+    """读取上次成功使用的 ChromeDriver 路径。"""
+    try:
+        with open(CHROMEDRIVER_CACHE_FILE, "r", encoding="utf-8") as f:
+            cached = f.read().strip()
+        if cached and (os.path.exists(cached) or os.path.islink(cached)):
+            return cached
+    except Exception:
+        pass
+    return None
+
+
+def _write_cached_chromedriver_path(driver_path):
+    """把可用的 ChromeDriver 路径写入缓存，避免下次重复触发自动安装下载。"""
+    try:
+        os.makedirs(os.path.dirname(CHROMEDRIVER_CACHE_FILE), exist_ok=True)
+        with open(CHROMEDRIVER_CACHE_FILE, "w", encoding="utf-8") as f:
+            f.write(driver_path)
+    except Exception:
+        pass
+
+
 def get_chromedriver_path():
     """
     获取 ChromeDriver 路径，如果不存在则自动安装
@@ -180,18 +207,23 @@ def get_chromedriver_path():
     if not os.path.exists(chrome_path):
         raise RuntimeError("未找到 Chrome 浏览器，请先安装 Chrome")
 
-    # 获取 Chrome 版本
     chrome_version_str = _run_command_get_version([chrome_path, "--version"])
     chrome_version = _get_version_from_output(chrome_version_str) if chrome_version_str else None
 
     if not chrome_version:
         raise RuntimeError("无法获取 Chrome 版本")
 
-    # 检查已安装的 ChromeDriver 是否匹配
-    chromedriver_paths = [
+    # 候选路径 = 缓存路径 + Homebrew 路径
+    # 把上次 chromedriver_autoinstaller 安装到的位置也算进来，
+    # 避免每次启动都触发"未匹配 → 重新下载"，损失 5-15 秒抢票启动开销
+    chromedriver_paths = []
+    cached = _read_cached_chromedriver_path()
+    if cached:
+        chromedriver_paths.append(cached)
+    chromedriver_paths.extend([
         "/opt/homebrew/bin/chromedriver",
         "/usr/local/bin/chromedriver",
-    ]
+    ])
 
     for driver_path in chromedriver_paths:
         if os.path.exists(driver_path) or os.path.islink(driver_path):
@@ -199,22 +231,21 @@ def get_chromedriver_path():
             if driver_version_str:
                 driver_version = _get_version_from_output(driver_version_str)
                 if driver_version == chrome_version:
-                    # 版本匹配，直接使用
+                    _write_cached_chromedriver_path(driver_path)
                     return driver_path
 
-    # 版本不匹配或不存在，使用自动安装器
     print(f"  Chrome 版本: {chrome_version}")
     print("  正在自动安装匹配的 ChromeDriver...")
     try:
         import chromedriver_autoinstaller
         chromedriver_path = chromedriver_autoinstaller.install()
 
-        # 验证安装的版本
         result = _run_command_get_version([chromedriver_path, "--version"])
         if not result:
             raise RuntimeError("ChromeDriver 无法执行")
 
         print(f"  ✓ ChromeDriver 安装成功: {result}")
+        _write_cached_chromedriver_path(chromedriver_path)
         return chromedriver_path
     except ImportError:
         raise RuntimeError("未安装 chromedriver-autoinstaller，请运行: pip install chromedriver-autoinstaller")
